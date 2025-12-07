@@ -4,7 +4,7 @@
 
 import * as core from '@actions/core'
 import { promises as fs } from 'fs'
-import { v4 as uuidv4 } from 'uuid'
+import * as crypto from 'crypto'
 import * as path from 'path'
 import * as io from '@actions/io'
 import * as exec from '@actions/exec'
@@ -16,7 +16,8 @@ async function resolveShell(): Promise<string[]> {
     bash: ['bash', '--noprofile', '--norc', '-eo', 'pipefail', '{0}'],
     cmd: ['cmd', '/D', '/E:ON', '/V:OFF', '/S', '/C', '"CALL "{0}""'],
     pwsh: ['pwsh', '-command', ". '{0}'"],
-    powershell: ['powershell', '-command', ". '{0}'"]
+    powershell: ['powershell', '-command', ". '{0}'"],
+    dotnet: ['dotnet', 'run', '-c', 'Release', '{0}']
   }
   const shellCommand = core.getInput('shell', { required: false })
   if (!shellCommand) {
@@ -39,7 +40,8 @@ function resolveExtension(command: string): string {
     python: 'py',
     cmd: 'cmd',
     pwsh: 'ps1',
-    powershell: 'ps1'
+    powershell: 'ps1',
+    dotnet: 'cs'
   }
   if (command in commandExtensions) {
     return commandExtensions[command]
@@ -71,14 +73,14 @@ async function run(): Promise<void> {
 
     const runnerTempPath: string = process.env.RUNNER_TEMP as string
     const extension: string = resolveExtension(command)
-    const uniqueId = uuidv4()
+    const uniqueId = crypto.randomUUID()
     const scriptFileName = `retry-run-action-${uniqueId}.${extension}`
     const scriptPath = path.join(runnerTempPath, scriptFileName)
     await fs.writeFile(scriptPath, content)
 
     const commandArgs = shellCommands
       .slice(1)
-      .map(item => item.replace('{0}', scriptPath))
+      .map((item) => item.replace('{0}', scriptPath))
 
     const options: exec.ExecOptions = {}
     options.windowsVerbatimArguments = command === 'cmd'
@@ -86,17 +88,13 @@ async function run(): Promise<void> {
     let attempt = 1
     for (let i = 1; i < retry; i++, attempt++) {
       try {
-        options.env = {
-          ...process.env,
-          RETRY_RUN_ATTEMPT: attempt.toString()
-        }
         await runOnce(commandPath, commandArgs, options, attempt)
         return
       } catch (error) {
         // Fail the workflow run if an error occurs
         if (error instanceof Error) core.warning(error.message)
         if (interval > 0) {
-          await new Promise(resolve => setTimeout(resolve, interval * 1000))
+          await new Promise((resolve) => setTimeout(resolve, interval * 1000))
         }
       }
     }
